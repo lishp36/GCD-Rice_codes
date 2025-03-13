@@ -1,0 +1,255 @@
+description:
+  cn_short: 地区的中文名称
+  cn_long: 地区的中文全称
+  "digital": 版本号
+  data: TIFF 数据的信息
+  data_info: TIFF 数据的信息
+  band: 使用的波段名称（red, green, blue, nir, swir1...）
+  satellite: 卫星名称（L5, L7, L8, S1, S2...）
+  res: 分辨率（m）
+  composite: 合成信息
+  scale: 放大系数（相比原始值扩大了多少）
+  proj: 投影名称（WGS84, ALBERS...）
+  preprocess: 预处理（i 表示插值，f 表示滤波）
+  process: 运算时需要的信息
+  t: 未知曲线的时次
+  t_std: 经典曲线的时次
+  method: 方法（dtw, twdtw）
+  std: 经典曲线
+  attributes: 其他说明
+
+#Timing of remote sensing imagery.遥感影像的时序
+#SouthKorea
+t_137_8_225:
+  - 137 
+  - 145
+  - 153 # Jun
+  - 161
+  - 169
+  - 177
+  - 185 # Jul
+  - 193
+  - 201
+  - 209
+  - 217 # Aug
+  - 225
+
+
+data_info:
+# SouthKorea
+  L589_S2_swir1-137_8_225_day-i-f-WGS84-crop-v2: &L589_S2_swir1-137_8_225_day-i-f-WGS84-crop-v2
+    name: L589_S2_swir1-137_8_225_day-i-f-WGS84-crop-v2
+    path: /mnt/private1/lisp/images-S2
+    band: swir1
+    satellite: L5
+    res: 30
+    composite: { start: 137, end: 225, step: 8, unit: day }
+    scale: 30
+    proj: WGS84
+    preprocess: [i, f]
+
+functions:
+  dist_pure: &dist_pure getdist(pix, t, std) = method(pix / scale, std, t, t_std)
+  xdist_pure: &xdist_pure |-
+    begin
+    tweight = Float32.(tw(t, t_std))
+    getdist(pix, t, std) = tw_dtw(pix, std, tweight; factor=scale)
+    end
+  xdist_pure_m: &xdist_pure_m |-
+    begin
+    tlen, stdlen = length(t), length(std)
+    tweight = Float32.(tw(t, t_std))
+    getdist(pix, t, std) = tw_m_dtw(pix, std, tweight; factor=scale)
+    end
+  xdist_pure_halfbeta: &xdist_pure_halfbeta |-
+    begin
+    tlen, stdlen = length(t), length(std)
+    beta = (t_std[end] - t_std[1]) / 2
+    tweight = Float32.(tw(t, t_std; β=beta))
+    getdist(pix, t, std) = tw_dtw(pix, std, tweight; factor=scale)
+    end
+  xdist_pure_m_halfbeta: &xdist_pure_m_halfbeta |-
+    begin
+    tlen, stdlen = length(t), length(std)
+    beta = (t_std[end] - t_std[1]) / 2
+    tweight = Float32.(tw(t, t_std; β=beta))
+    getdist(pix, t, std) = tw_m_dtw(pix, std, tweight; factor=scale)
+    end
+  dist_tailor: &dist_tailor |-
+    begin
+    tlen, stdlen = length(t), length(std)
+    tdiff = tlen - stdlen + 1
+    getdist0(pix, t, std, i) = method(pix[i:(stdlen+i-1)], std, t[i:(stdlen+i-1)], t_std)
+    getdist(pix, t, std) = minimum(getdist0(pix / scale, t, std, i) for i = 1:tdiff)
+    end
+  dist_translation: &dist_translation |-
+    begin
+    tlen, stdlen = length(t), length(std)
+    tdiff = tlen - stdlen + 1
+    getdist0(pix, t, std, i) = method(pix[i:(stdlen+i-1)], std, t_std, t_std)
+    getdist(pix, t, std) = minimum(getdist0(pix / scale, t, std, i) for i = 1:tdiff)
+    end
+  dist_tailor_stretch: &dist_tailor_stretch
+  dist_translation_stretch: &dist_translation_stretch |-
+    begin
+    tlen, stdlen = length(t), length(std)
+    tdiff = tlen - stdlen + 1
+    t_offset = t_std[stdlen÷2]
+    t_alignment(i, j) = t[i:j] .+ (t_offset - t[(i+j)÷2])
+    getdist0(pix, t, std, i, j) = method(pix[i:j], std, t_alignment(i, j), t_std)
+    getdist(pix, t, std) = minimum(
+        getdist0(pix / scale, t, std, i, j) for i = 1:tdiff for j = stdlen+i-1:tlen
+    )
+    end
+  dist_translation_stretch2: &dist_translation_stretch2 |-
+    begin
+    tlen, stdlen = length(t), length(std)
+    tdiff = tlen - stdlen + 1
+    t_offset = t_std[stdlen÷2]
+    t_alignment(i, j) = t[i:j] .+ (t_offset - t[(i+j)÷2])
+    getdist0(pix, t, std, i, j) = method(pix[i:j], std, t_alignment(i, j), t_std)
+    getdist(pix, t, std) = minimum(
+        getdist0(pix / scale, t, std, i, j) for i = 1:tdiff for j = stdlen+i-1:min(stdlen+i, tlen)
+    )
+    end
+  dist_where_translation_stretch2: &dist_where_translation_stretch2 |-
+    begin
+    tlen, stdlen = length(t), length(std)
+    tdiff = tlen - stdlen + 1
+    t_offset = t_std[stdlen÷2]
+    t_alignment(i, j) = t[i:j] .+ (t_offset - t[(i+j)÷2])
+    getdist0(pix, t, std, i, j) = method(pix[i:j], std, t_alignment(i, j), t_std)
+    getdist(pix, t, std) = findmin([
+        getdist0(pix / scale, t, std, i, j) for i = 1:tdiff for j = stdlen+i-1:min(stdlen+i, tlen)
+    ])[2] |> Float32
+    end
+  xdist_translation: &xdist_translation |-
+    begin
+    tlen, stdlen = length(t), length(std)
+    tdiff = tlen - stdlen + 1
+    tws = Dict()
+    for i = 1:tdiff
+        tws[i] = Float32.(tw(t[i:i+stdlen-1], t_std))
+    end
+    @fastmath @inbounds getdist(pix, t, std) = minimum(
+        tw_dtw(pix[i:i+stdlen-1], std, tws[i]; factor=scale) for i = 1:tdiff
+    )
+    end
+  xdist_translation_stretch2: &xdist_translation_stretch2 |-
+    begin
+    tlen, stdlen = length(t), length(std)
+    tdiff = tlen - stdlen + 1
+    t_offset = t_std[stdlen÷2]
+    t_alignment(i, j) = t[i:j] .+ (t_offset - t[(i+j)÷2])
+    tws = Dict()
+    for i = 1:tdiff
+        for j = stdlen+i-1:min(stdlen+i, tlen)
+            tws[i, j] = Float32.(tw(t_alignment(i, j), t_std))
+        end
+    end
+    @fastmath @inbounds getdist(pix, t, std) = minimum(
+        tw_dtw(pix[i:j], std, tws[i, j]; factor=scale) for i = 1:tdiff for j = stdlen+i-1:min(stdlen+i, tlen)
+    )
+    end
+  xdist_where_translation_stretch2: &xdist_where_translation_stretch2 |-
+    begin
+    tlen, stdlen = length(t), length(std)
+    tdiff = tlen - stdlen + 1
+    t_offset = t_std[stdlen÷2]
+    t_alignment(i, j) = t[i:j] .+ (t_offset - t[(i+j)÷2])
+    tws = Dict()
+    for i = 1:tdiff
+        for j = stdlen+i-1:min(stdlen+i, tlen)
+            tws[i, j] = Float32.(tw(t_alignment(i, j), t_std))
+        end
+    end
+    corresponds = [(i, j) for i = 1:tdiff for j = stdlen+i-1:min(stdlen+i, tlen)]
+    @fastmath @inbounds getdist(pix, t, std) = findmin([
+        tw_dtw(pix[i:j], std, tws[i, j]; factor=scale) for i = 1:tdiff for j = stdlen+i-1:min(stdlen+i, tlen)
+    ])[2] |> Float32
+    end
+  xdist_and_where_translation_stretch2: &xdist_and_where_translation_stretch2 |-
+    begin
+    tlen, stdlen = length(t), length(std)
+    tdiff = tlen - stdlen + 1
+    t_offset = t_std[stdlen÷2]
+    t_alignment(i, j) = t[i:j] .+ (t_offset - t[(i+j)÷2])
+    tws = Dict()
+    for i = 1:tdiff
+        for j = stdlen+i-1:min(stdlen+i, tlen)
+            tws[i, j] = Float32.(tw(t_alignment(i, j), t_std))
+        end
+    end
+    corresponds = [(i, j) for i = 1:tdiff for j = stdlen+i-1:min(stdlen+i, tlen)]
+    @fastmath @inbounds getdist(pix, t, std) = findmin([
+        tw_dtw(pix[i:j], std, tws[i, j]; factor=scale) for i = 1:tdiff for j = stdlen+i-1:min(stdlen+i, tlen)
+    ])
+    end
+  xdist_m_translation_stretch2: &xdist_m_translation_stretch2 |-
+    begin
+    tlen, stdlen = length(t), length(std)
+    tdiff = tlen - stdlen + 1
+    t_offset = t_std[stdlen÷2]
+    t_alignment(i, j) = t[i:j] .+ (t_offset - t[(i+j)÷2])
+    tws = Dict()
+    for i = 1:tdiff
+        for j = stdlen+i-1:min(stdlen+i, tlen)
+            tws[i, j] = Float32.(tw(t_alignment(i, j), t_std))
+        end
+    end
+    @fastmath @inbounds getdist(pix, t, std) = minimum(
+        tw_m_dtw(pix[i:j], std, tws[i, j]; factor=scale) for i = 1:tdiff for j = stdlen+i-1:min(stdlen+i, tlen)
+    )
+    end
+  xdist_halfbeta_translation_stretch2: &xdist_halfbeta_translation_stretch2 |-
+    begin
+    tlen, stdlen = length(t), length(std)
+    tdiff = tlen - stdlen + 1
+    t_offset = t_std[stdlen÷2]
+    t_alignment(i, j) = t[i:j] .+ (t_offset - t[(i+j)÷2])
+    beta = (t_std[end] - t_std[1]) / 2
+    tws = Dict()
+    for i = 1:tdiff
+        for j = stdlen+i-1:min(stdlen+i, tlen)
+            tws[i, j] = Float32.(tw(t_alignment(i, j), t_std; β=beta))
+        end
+    end
+    @fastmath @inbounds getdist(pix, t, std) = minimum(
+        tw_dtw(pix[i:j], std, tws[i, j]; factor=scale) for i = 1:tdiff for j = stdlen+i-1:min(stdlen+i, tlen)
+    )
+    end
+  xdist_m_halfbeta_translation_stretch2: &xdist_m_halfbeta_translation_stretch2 |-
+    begin
+    tlen, stdlen = length(t), length(std)
+    tdiff = tlen - stdlen + 1
+    t_offset = t_std[stdlen÷2]
+    t_alignment(i, j) = t[i:j] .+ (t_offset - t[(i+j)÷2])
+    beta = (t_std[end] - t_std[1]) / 2
+    tws = Dict()
+    for i = 1:tdiff
+        for j = stdlen+i-1:min(stdlen+i, tlen)
+            tws[i, j] = Float32.(tw(t_alignment(i, j), t_std; β=beta))
+        end
+    end
+    @fastmath @inbounds getdist(pix, t, std) = minimum(
+        tw_m_dtw(pix[i:j], std, tws[i, j]; factor=scale) for i = 1:tdiff for j = stdlen+i-1:min(stdlen+i, tlen)
+    )
+    end
+
+SouthKorea:
+  cn_short: 韩国-S2-V2
+  cn_long: 韩国-S2-V2
+  "0":
+    data: *L589_S2_swir1-137_8_225_day-i-f-WGS84-crop-v2
+    process:
+      t: []
+      t_std: &SouthKorea_t_std []
+      method: twdtw
+      std: &SouthKorea_std
+        - 
+        - 
+        - 
+        - 
+        - 
+      attributes:
+      get_dist: *dist_translation
