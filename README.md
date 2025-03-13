@@ -13,6 +13,7 @@
 7. call_distance_new.py             -Identify the pre-processed remote sensing images to obtain the rice location map.
 # Instructions for use of TWDTW-SWIR1-VH:
 It is generally consistent with the aforementioned TWDTW-SWIR1, but there are differences in steps 6 and 7. The details are as follows:
+
 6. area.yaml,method_info.yaml,recognize_multibands.jl   -Modify the corresponding annex documents.
 7. call_distance_multibands.py                          -Identify the pre-processed remote sensing images to obtain the rice location map.
 # Instructions for use of RandomForest:
